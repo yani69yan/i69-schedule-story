@@ -1,0 +1,1 @@
+DELETED_ACCOUNT_MESSAGE_EN = 'You have deleted your profile. Please contact us to re-join.'

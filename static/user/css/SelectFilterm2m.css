@@ -1,0 +1,13 @@
+.selector .selector-chosen input {
+    width: 320px;
+    margin-left: 8px;
+}
+
+.selector-chosen select {
+    border-top: 1px solid gainsboro;
+    height: 17.2em;
+}
+
+.selector span.top-counter {
+    float: inline-end;
+}

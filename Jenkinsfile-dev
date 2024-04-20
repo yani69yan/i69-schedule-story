@@ -1,0 +1,82 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: '', description: 'Git branch name')
+        string(name: 'REVISION', defaultValue: 'latest', description: 'Git revision')
+    }
+
+    environment {
+        AWS_ACCOUNT_ID="500255737853"
+        AWS_DEFAULT_REGION="eu-west-3"
+        WEB_REPO_NAME="dev-i69api-web"
+        REDIS_REPO_NAME="dev-i69api-redis"
+        IMAGE_TAG="${currentBuild.number}"
+        REPOSITORY_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                script {
+                    // Checkout code from the specified branch and revision
+                    checkout([$class: 'GitSCM', branches: [[name: "refs/heads/${params.BRANCH_NAME}", SHA1: params.REVISION ]], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '', url: 'https://oauth2:D6c-xYxb7rstt9_qJJb6@gitlab.i69app.com/dev-center/i69-api.git']]])  
+                }
+            }
+        }
+        // logging to AWS ECR
+        stage('Logging into AWS ECR') {
+            steps {
+                script {
+                sh """aws ecr get-login-password --region ${AWS_DEFAULT_REGION} --profile jenkins-ecr | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"""
+                }
+            }    
+        }
+        // Building Docker images
+        stage('Building image') {
+        steps{
+            script {
+                    sh """docker build -t ${REPOSITORY_URI}/${WEB_REPO_NAME}:${IMAGE_TAG} -f ./docker/django/dev/Dockerfile . """
+                    sh """docker build -t ${REPOSITORY_URI}/${REDIS_REPO_NAME}:${IMAGE_TAG} -f ./docker/redis/Dockerfile . """
+                }
+            }
+        }
+        // Uploading Docker images into AWS ECR
+        stage('Pushing to ECR') {
+        steps{  
+            script {
+                    sh """docker push ${REPOSITORY_URI}/${WEB_REPO_NAME}:${IMAGE_TAG}"""
+                    sh """docker push ${REPOSITORY_URI}/${REDIS_REPO_NAME}:${IMAGE_TAG}"""
+                }
+            }
+        }
+        // Update Docker Compose File
+        stage('Update Docker-Compose File') {
+            steps {
+                script {
+                    // Update Docker Compose files with the new image tag
+                    sh """sed -i "s/_IMAGE_TAG/${IMAGE_TAG}/g;" docker-compose-dev.yml"""
+                }
+            }
+        }
+        // Deploy On Server
+        stage('Deploy On Server') {
+            steps {
+                script {
+                    sh "rsync -azP docker-compose-dev.yml test_server:/root/pipeline/i69-api/"                    
+                    sh """ssh test_server '
+                    aws ecr get-login-password --region ${AWS_DEFAULT_REGION} --profile jenkins-ecr | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+                    export ENV_FILE="/root/pipeline/i69-api/.env"
+                    docker-compose -f /root/pipeline/i69-api/docker-compose-dev.yml up -d
+                    '"""
+                    
+                }
+            }
+        }
+    }
+    post {
+        always{
+             cleanWs()
+        }
+    }
+}
